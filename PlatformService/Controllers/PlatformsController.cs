@@ -1,9 +1,12 @@
+using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using PlatformService.Data;
 using PlatformService.Dtos;
 using PlatformService.Models;
+using PlatformService.SyncDataServices.Http;
 
 namespace PlatformService.Controllers
 {
@@ -13,18 +16,25 @@ namespace PlatformService.Controllers
     {
         private readonly IPlatformRepository _repository;
         private readonly IMapper _mapper;
+        private readonly ICommandDataClient _commandDataClient;
 
-        public PlatformsController(IPlatformRepository platformRepo, IMapper mapper)
+        public PlatformsController(
+            IPlatformRepository platformRepo,
+            IMapper mapper,
+            ICommandDataClient commandDataClient)
         {
             _repository = platformRepo;
             _mapper = mapper;
+            _commandDataClient = commandDataClient;
         }
+
         [HttpGet]
         public ActionResult<IEnumerable<PlatformReadDto>> GetPlatforms()
         {
             var platformIems = _repository.GetAllPlatforms();
             return Ok(_mapper.Map<IEnumerable<PlatformReadDto>>(platformIems));
         }
+
         [HttpGet("{id}", Name = "GetPlatformById")]
         public ActionResult<PlatformReadDto> GetPlatformById(int id)
         {
@@ -36,17 +46,29 @@ namespace PlatformService.Controllers
             }
             return NotFound();
         }
+
         [HttpPost]
-        public ActionResult<PlatformCreateDto> AddPlatform(PlatformCreateDto platformCreateDto)
+        public async Task<ActionResult<PlatformReadDto>> CreatePlatform(PlatformCreateDto platformCreateDto)
         {
-            var addPlatformItem = _repository.AddPlatform(new Platform()
+            var platformModel = _mapper.Map<Platform>(platformCreateDto);
+            var addPlatformItem = _repository.AddPlatform(platformModel);
+            _repository.SaveChanges();
+
+
+            var platformReadDto = _mapper.Map<PlatformReadDto>(platformModel);
+
+            try
             {
-                Name = platformCreateDto.Name,
-                Publisher = platformCreateDto.Publisher,
-                Cost = platformCreateDto.Cost
-            });
-            return Ok(addPlatformItem);
+                await _commandDataClient.SendPlatformToCommand(platformReadDto);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Could not send syncrhonously {ex.Message}");
+            }
+
+            return CreatedAtRoute(nameof(GetPlatformById), new { id = platformReadDto.Id }, platformReadDto);
         }
+
         [HttpDelete]
         public ActionResult<int> DeletePlatform(Platform platform)
         {
